@@ -51,14 +51,14 @@ class IsItTooHotApp(app.App):
             ctx.font_size = 14
             ctx.move_to(0, 14).text("Retrying soon...")
 
-        elif self.view == "verdict":
+        elif self.view == "verdict" and self.current_temp is not None:
             verdict, (r, g, b), _ = _get_state(self.current_temp)
             ctx.rgb(r, g, b).rectangle(-120, -120, 240, 240).fill()
             ctx.rgb(1, 1, 1)
             ctx.font_size = 20
             ctx.move_to(0, 0).text(verdict)
 
-        elif self.view == "detail":
+        elif self.view == "detail" and self.current_temp is not None:
             verdict, (r, g, b), _ = _get_state(self.current_temp)
             ctx.rgb(0.08, 0.08, 0.08).rectangle(-120, -120, 240, 240).fill()
             ctx.rgb(r, g, b)
