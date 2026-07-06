@@ -26,6 +26,16 @@ class IsItTooHotApp(app.App):
         self.current_temp = None
         self.view = "loading"   # "loading" | "verdict" | "detail" | "error"
         self._detail_ms = 0
+        self._set_leds()
+
+    def _set_leds(self):
+        if self.view in ("loading", "error") or self.current_temp is None:
+            color = (10, 10, 10)
+        else:
+            _, _, color = _get_state(self.current_temp)
+        for i in range(19):
+            tildagonos.leds[i] = color
+        tildagonos.leds.write()
 
     def update(self, delta):
         if self.button_states.get(BUTTON_TYPES["CANCEL"]):
