@@ -76,6 +76,26 @@ class IsItTooHotApp(app.App):
         if self.button_states.get(BUTTON_TYPES["CANCEL"]):
             self.button_states.clear()
             self.minimise()
+            return False
+
+        if self.view == "detail":
+            self._detail_ms -= delta
+            if self._detail_ms <= 0:
+                self.view = "verdict"
+                self.button_states.clear()
+                return True   # trigger redraw back to verdict
+            return False      # detail view is static; no redraw needed mid-countdown
+
+        # Any non-CANCEL button → show detail (only if we have data)
+        for btn in ("CONFIRM", "UP", "DOWN", "LEFT", "RIGHT"):
+            if self.button_states.get(BUTTON_TYPES[btn]):
+                self.button_states.clear()
+                if self.current_temp is not None:
+                    self.view = "detail"
+                    self._detail_ms = 4000
+                    return True   # trigger redraw to detail view
+                return False
+
         return False
 
     def draw(self, ctx):
