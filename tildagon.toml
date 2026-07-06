@@ -1,0 +1,14 @@
+[app]
+name = "Is It Too Hot?"
+category = "Apps"
+wifi_preference = true
+
+[entry]
+# Uses __app_export__ = IsItTooHotApp
+
+[metadata]
+author = "willwilson"
+license = "MIT"
+url = "https://github.com/thewillwilson/is-it-too-hot-emf"
+description = "Is it too hot at EMF Camp? Live temperature from the site's weather station via MQTT."
+version = 1
