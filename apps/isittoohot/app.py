@@ -1,17 +1,14 @@
 import app
 import asyncio
-import requests
+import json
+import random
 from events.input import Buttons, BUTTON_TYPES
 from tildagonos import tildagonos
 
-_LAT = 52.0369
-_LON = -2.3936
-_URL = (
-    "https://api.open-meteo.com/v1/forecast"
-    "?latitude={}&longitude={}&current=temperature_2m"
-).format(_LAT, _LON)
-_REFRESH_S = 300   # 5 minutes between successful fetches
-_RETRY_S = 30      # 30 seconds after a failed fetch
+_BROKER = "mqtt.emf.camp"
+_PORT = 1883
+_TOPIC = b"weather/hq"
+_DETAIL_MS = 4000
 
 
 def _get_state(temp):
@@ -34,42 +31,69 @@ class IsItTooHotApp(app.App):
     def __init__(self):
         super().__init__()
         self.button_states = Buttons(self)
-        self.current_temp = None
-        self.view = "loading"   # "loading" | "verdict" | "detail" | "error"
+        self.temp = None
+        self.view = "loading"
+        self._connected = False
         self._detail_ms = 0
         self._set_leds()
 
     def _set_leds(self):
-        if self.view in ("loading", "error") or self.current_temp is None:
+        if self.temp is None or self.view in ("loading", "error"):
             color = (10, 10, 10)
         else:
-            _, _, color = _get_state(self.current_temp)
+            _, _, color = _get_state(self.temp)
         for i in range(19):
             tildagonos.leds[i] = color
         tildagonos.leds.write()
 
-    async def _fetch_weather(self):
+    def _on_mqtt_message(self, topic, msg):
         try:
-            resp = requests.get(_URL, timeout=10)
-            data = resp.json()
-            resp.close()
-            self.current_temp = float(data["current"]["temperature_2m"])
+            data = json.loads(msg)
+            self.temp = float(data["temp"])
             self.view = "verdict"
             self._set_leds()
-            return _REFRESH_S
         except Exception as e:
-            print("fetch error:", e)
-            self.view = "error"
-            self._set_leds()
-            return _RETRY_S
+            print("MQTT parse error:", e)
 
-    async def _fetch_loop(self):
+    async def _mqtt_loop(self):
+        try:
+            from umqtt.robust import MQTTClient
+        except ImportError:
+            from umqtt.simple import MQTTClient
+
+        client_id = "badge-hot-{:04x}".format(random.getrandbits(16))
+
         while True:
-            sleep_s = await self._fetch_weather()
-            await asyncio.sleep(sleep_s)
+            try:
+                client = MQTTClient(client_id, _BROKER, port=_PORT, keepalive=60)
+                client.set_callback(self._on_mqtt_message)
+
+                try:
+                    loop = asyncio.get_running_loop()
+                except AttributeError:
+                    loop = asyncio.get_event_loop()
+
+                if hasattr(loop, "run_in_executor"):
+                    await loop.run_in_executor(None, client.connect)
+                else:
+                    client.connect()
+
+                client.subscribe(_TOPIC)
+                self._connected = True
+
+                while True:
+                    client.check_msg()
+                    await asyncio.sleep(1)
+
+            except Exception as e:
+                print("MQTT error:", e)
+                self._connected = False
+                self.view = "error"
+                self._set_leds()
+                await asyncio.sleep(15)
 
     async def run(self, render_update):
-        asyncio.create_task(self._fetch_loop())
+        asyncio.create_task(self._mqtt_loop())
         await super().run(render_update)
 
     def update(self, delta):
@@ -80,59 +104,74 @@ class IsItTooHotApp(app.App):
 
         if self.view == "detail":
             self._detail_ms -= delta
+            for btn in ("CONFIRM", "UP", "DOWN", "LEFT", "RIGHT"):
+                if self.button_states.get(BUTTON_TYPES[btn]):
+                    self.button_states.clear()
+                    self.view = "verdict"
+                    return True
             if self._detail_ms <= 0:
                 self.view = "verdict"
-                return True   # trigger redraw back to verdict
-            return False      # detail view is static; no redraw needed mid-countdown
+                return True
+            return False
 
-        # Any non-CANCEL button → show detail (only if we have data)
-        for btn in ("CONFIRM", "UP", "DOWN", "LEFT", "RIGHT"):
-            if self.button_states.get(BUTTON_TYPES[btn]):
-                self.button_states.clear()
-                if self.current_temp is not None:
+        if self.view == "verdict" and self.temp is not None:
+            for btn in ("CONFIRM", "UP", "DOWN", "LEFT", "RIGHT"):
+                if self.button_states.get(BUTTON_TYPES[btn]):
+                    self.button_states.clear()
                     self.view = "detail"
-                    self._detail_ms = 4000
-                    return True   # trigger redraw to detail view
-                return False
+                    self._detail_ms = _DETAIL_MS
+                    return True
 
-        return False
+        return True
 
     def draw(self, ctx):
         ctx.text_align = ctx.CENTER
         ctx.text_baseline = "middle"
 
         if self.view == "loading":
-            ctx.rgb(0.25, 0.25, 0.25).rectangle(-120, -120, 240, 240).fill()
-            ctx.rgb(1, 1, 1)
-            ctx.font_size = 22
-            ctx.move_to(0, 0).text("Loading...")
-
-        elif self.view == "error":
-            ctx.rgb(0.25, 0.25, 0.25).rectangle(-120, -120, 240, 240).fill()
-            ctx.rgb(1, 1, 1)
-            ctx.font_size = 22
-            ctx.move_to(0, -12).text("No data")
-            ctx.font_size = 14
-            ctx.move_to(0, 14).text("Retrying soon...")
-
-        elif self.view == "verdict" and self.current_temp is not None:
-            verdict, (r, g, b), _ = _get_state(self.current_temp)
-            ctx.rgb(r, g, b).rectangle(-120, -120, 240, 240).fill()
+            ctx.rgb(0.15, 0.15, 0.15).rectangle(-120, -120, 240, 240).fill()
             ctx.rgb(1, 1, 1)
             ctx.font_size = 20
-            ctx.move_to(0, 0).text(verdict)
+            if self._connected:
+                ctx.move_to(0, -12).text("Waiting for")
+                ctx.move_to(0, 14).text("weather data...")
+            else:
+                ctx.move_to(0, 0).text("Connecting...")
 
-        elif self.view == "detail" and self.current_temp is not None:
-            verdict, (r, g, b), _ = _get_state(self.current_temp)
+        elif self.view == "error":
+            ctx.rgb(0.15, 0.15, 0.15).rectangle(-120, -120, 240, 240).fill()
+            ctx.rgb(1, 0.3, 0.3)
+            ctx.font_size = 20
+            ctx.move_to(0, -12).text("No data")
+            ctx.rgb(0.7, 0.7, 0.7)
+            ctx.font_size = 14
+            ctx.move_to(0, 14).text("Retrying...")
+
+        elif self.view == "verdict" and self.temp is not None:
+            verdict, (r, g, b), _ = _get_state(self.temp)
+            ctx.rgb(r * 0.5, g * 0.5, b * 0.5).rectangle(-120, -120, 240, 240).fill()
+            ctx.rgb(1, 1, 1)
+            ctx.font_size = 16
+            ctx.move_to(0, -30).text("Is it too hot at EMF?")
+            ctx.rgb(r, g, b)
+            ctx.font_size = 28
+            ctx.move_to(0, 10).text(verdict)
+            ctx.rgb(0.8, 0.8, 0.8)
+            ctx.font_size = 12
+            ctx.move_to(0, 45).text("Press any button for temp")
+
+        elif self.view == "detail" and self.temp is not None:
+            verdict, (r, g, b), _ = _get_state(self.temp)
             ctx.rgb(0.08, 0.08, 0.08).rectangle(-120, -120, 240, 240).fill()
             ctx.rgb(r, g, b)
             ctx.font_size = 13
-            ctx.move_to(0, -38).text("Is it too hot at EMF?")
+            ctx.move_to(0, -40).text("Is it too hot at EMF?")
             ctx.rgb(1, 1, 1)
-            ctx.font_size = 38
-            ctx.move_to(0, 5).text("{:.1f}\xb0C".format(self.current_temp))
-            ctx.font_size = 16
-            ctx.move_to(0, 44).text(verdict)
+            ctx.font_size = 44
+            ctx.move_to(0, 5).text("{:.1f}C".format(self.temp))
+            ctx.rgb(r, g, b)
+            ctx.font_size = 18
+            ctx.move_to(0, 46).text(verdict)
 
         self.draw_overlays(ctx)
 
