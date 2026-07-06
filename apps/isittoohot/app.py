@@ -82,7 +82,6 @@ class IsItTooHotApp(app.App):
             self._detail_ms -= delta
             if self._detail_ms <= 0:
                 self.view = "verdict"
-                self.button_states.clear()
                 return True   # trigger redraw back to verdict
             return False      # detail view is static; no redraw needed mid-countdown
 
