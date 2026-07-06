@@ -52,11 +52,13 @@ class IsItTooHotApp(app.App):
         try:
             resp = requests.get(_URL, timeout=10)
             data = resp.json()
+            resp.close()
             self.current_temp = float(data["current"]["temperature_2m"])
             self.view = "verdict"
             self._set_leds()
             return _REFRESH_S
-        except Exception:
+        except Exception as e:
+            print("fetch error:", e)
             self.view = "error"
             self._set_leds()
             return _RETRY_S
