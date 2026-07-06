@@ -1,6 +1,17 @@
 import app
+import asyncio
+import requests
 from events.input import Buttons, BUTTON_TYPES
 from tildagonos import tildagonos
+
+_LAT = 52.0369
+_LON = -2.3936
+_URL = (
+    "https://api.open-meteo.com/v1/forecast"
+    "?latitude={}&longitude={}&current=temperature_2m"
+).format(_LAT, _LON)
+_REFRESH_S = 300   # 5 minutes between successful fetches
+_RETRY_S = 30      # 30 seconds after a failed fetch
 
 
 def _get_state(temp):
@@ -36,6 +47,28 @@ class IsItTooHotApp(app.App):
         for i in range(19):
             tildagonos.leds[i] = color
         tildagonos.leds.write()
+
+    async def _fetch_weather(self):
+        try:
+            resp = requests.get(_URL, timeout=10)
+            data = resp.json()
+            self.current_temp = float(data["current"]["temperature_2m"])
+            self.view = "verdict"
+            self._set_leds()
+            return _REFRESH_S
+        except Exception:
+            self.view = "error"
+            self._set_leds()
+            return _RETRY_S
+
+    async def _fetch_loop(self):
+        while True:
+            sleep_s = await self._fetch_weather()
+            await asyncio.sleep(sleep_s)
+
+    async def run(self, render_update):
+        asyncio.create_task(self._fetch_loop())
+        await super().run(render_update)
 
     def update(self, delta):
         if self.button_states.get(BUTTON_TYPES["CANCEL"]):
