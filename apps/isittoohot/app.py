@@ -9,6 +9,7 @@ _BROKER = "mqtt.emf.camp"
 _PORT = 1883
 _TOPIC = b"weather/hq"
 _DETAIL_MS = 4000
+_NAV_BTNS = tuple(BUTTON_TYPES[b] for b in ("CONFIRM", "UP", "DOWN", "LEFT", "RIGHT"))
 
 
 def _get_state(temp):
@@ -32,16 +33,17 @@ class IsItTooHotApp(app.App):
         super().__init__()
         self.button_states = Buttons(self)
         self.temp = None
+        self._state = None
         self.view = "loading"
         self._connected = False
         self._detail_ms = 0
         self._set_leds()
 
     def _set_leds(self):
-        if self.temp is None or self.view in ("loading", "error"):
+        if self._state is None or self.view in ("loading", "error"):
             color = (10, 10, 10)
         else:
-            _, _, color = _get_state(self.temp)
+            _, _, color = self._state
         for i in range(19):
             tildagonos.leds[i] = color
         tildagonos.leds.write()
@@ -50,6 +52,7 @@ class IsItTooHotApp(app.App):
         try:
             data = json.loads(msg)
             self.temp = float(data["temp"])
+            self._state = _get_state(self.temp)
             self.view = "verdict"
             self._set_leds()
         except Exception as e:
@@ -67,17 +70,7 @@ class IsItTooHotApp(app.App):
             try:
                 client = MQTTClient(client_id, _BROKER, port=_PORT, keepalive=60)
                 client.set_callback(self._on_mqtt_message)
-
-                try:
-                    loop = asyncio.get_running_loop()
-                except AttributeError:
-                    loop = asyncio.get_event_loop()
-
-                if hasattr(loop, "run_in_executor"):
-                    await loop.run_in_executor(None, client.connect)
-                else:
-                    client.connect()
-
+                client.connect()
                 client.subscribe(_TOPIC)
                 self._connected = True
 
@@ -104,8 +97,8 @@ class IsItTooHotApp(app.App):
 
         if self.view == "detail":
             self._detail_ms -= delta
-            for btn in ("CONFIRM", "UP", "DOWN", "LEFT", "RIGHT"):
-                if self.button_states.get(BUTTON_TYPES[btn]):
+            for btn in _NAV_BTNS:
+                if self.button_states.get(btn):
                     self.button_states.clear()
                     self.view = "verdict"
                     return True
@@ -114,9 +107,9 @@ class IsItTooHotApp(app.App):
                 return True
             return False
 
-        if self.view == "verdict" and self.temp is not None:
-            for btn in ("CONFIRM", "UP", "DOWN", "LEFT", "RIGHT"):
-                if self.button_states.get(BUTTON_TYPES[btn]):
+        if self.view == "verdict" and self._state is not None:
+            for btn in _NAV_BTNS:
+                if self.button_states.get(btn):
                     self.button_states.clear()
                     self.view = "detail"
                     self._detail_ms = _DETAIL_MS
@@ -127,6 +120,7 @@ class IsItTooHotApp(app.App):
     def draw(self, ctx):
         ctx.text_align = ctx.CENTER
         ctx.text_baseline = "middle"
+        state = self._state
 
         if self.view == "loading":
             ctx.rgb(0.15, 0.15, 0.15).rectangle(-120, -120, 240, 240).fill()
@@ -147,8 +141,8 @@ class IsItTooHotApp(app.App):
             ctx.font_size = 14
             ctx.move_to(0, 14).text("Retrying...")
 
-        elif self.view == "verdict" and self.temp is not None:
-            verdict, (r, g, b), _ = _get_state(self.temp)
+        elif self.view == "verdict" and state is not None:
+            verdict, (r, g, b), _ = state
             ctx.rgb(r * 0.5, g * 0.5, b * 0.5).rectangle(-120, -120, 240, 240).fill()
             ctx.rgb(1, 1, 1)
             ctx.font_size = 16
@@ -160,8 +154,8 @@ class IsItTooHotApp(app.App):
             ctx.font_size = 12
             ctx.move_to(0, 45).text("Press any button for temp")
 
-        elif self.view == "detail" and self.temp is not None:
-            verdict, (r, g, b), _ = _get_state(self.temp)
+        elif self.view == "detail" and state is not None:
+            verdict, (r, g, b), _ = state
             ctx.rgb(0.08, 0.08, 0.08).rectangle(-120, -120, 240, 240).fill()
             ctx.rgb(r, g, b)
             ctx.font_size = 13
