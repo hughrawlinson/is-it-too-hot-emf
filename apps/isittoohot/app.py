@@ -1,5 +1,4 @@
 import app
-from app_components import tokens
 from events.input import Buttons, BUTTON_TYPES
 from tildagonos import tildagonos
 
@@ -24,6 +23,9 @@ class IsItTooHotApp(app.App):
     def __init__(self):
         super().__init__()
         self.button_states = Buttons(self)
+        self.current_temp = None
+        self.view = "loading"   # "loading" | "verdict" | "detail" | "error"
+        self._detail_ms = 0
 
     def update(self, delta):
         if self.button_states.get(BUTTON_TYPES["CANCEL"]):
@@ -32,12 +34,42 @@ class IsItTooHotApp(app.App):
         return False
 
     def draw(self, ctx):
-        ctx.rgb(0.4, 0.4, 0.4).rectangle(-120, -120, 240, 240).fill()
-        ctx.rgb(1, 1, 1)
-        ctx.font_size = 24
         ctx.text_align = ctx.CENTER
         ctx.text_baseline = "middle"
-        ctx.move_to(0, 0).text("skeleton")
+
+        if self.view == "loading":
+            ctx.rgb(0.25, 0.25, 0.25).rectangle(-120, -120, 240, 240).fill()
+            ctx.rgb(1, 1, 1)
+            ctx.font_size = 22
+            ctx.move_to(0, 0).text("Loading...")
+
+        elif self.view == "error":
+            ctx.rgb(0.25, 0.25, 0.25).rectangle(-120, -120, 240, 240).fill()
+            ctx.rgb(1, 1, 1)
+            ctx.font_size = 22
+            ctx.move_to(0, -12).text("No data")
+            ctx.font_size = 14
+            ctx.move_to(0, 14).text("Retrying soon...")
+
+        elif self.view == "verdict":
+            verdict, (r, g, b), _ = _get_state(self.current_temp)
+            ctx.rgb(r, g, b).rectangle(-120, -120, 240, 240).fill()
+            ctx.rgb(1, 1, 1)
+            ctx.font_size = 20
+            ctx.move_to(0, 0).text(verdict)
+
+        elif self.view == "detail":
+            verdict, (r, g, b), _ = _get_state(self.current_temp)
+            ctx.rgb(0.08, 0.08, 0.08).rectangle(-120, -120, 240, 240).fill()
+            ctx.rgb(r, g, b)
+            ctx.font_size = 13
+            ctx.move_to(0, -38).text("Is it too hot at EMF?")
+            ctx.rgb(1, 1, 1)
+            ctx.font_size = 38
+            ctx.move_to(0, 5).text("{:.1f}\xb0C".format(self.current_temp))
+            ctx.font_size = 16
+            ctx.move_to(0, 44).text(verdict)
+
         self.draw_overlays(ctx)
 
 
